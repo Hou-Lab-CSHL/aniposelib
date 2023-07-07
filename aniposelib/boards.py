@@ -563,10 +563,11 @@ class CharucoBoard(CalibrationObject):
 
         dkey = (marker_bits, dict_size)
         self.dictionary = aruco.getPredefinedDictionary(ARUCO_DICTS[dkey])
-
-        self.board = aruco.CharucoBoard_create(squaresX, squaresY,
-                                               square_length, marker_length,
-                                               self.dictionary)
+        self.board = aruco.CharucoBoard(size=(squaresX, squaresY),
+                                        squareLength=square_length,
+                                        markerLength=marker_length,
+                                        dictionary=self.dictionary)
+        self.detector = aruco.CharucoDetector(self.board)
 
         total_size = (squaresX - 1) * (squaresY - 1)
 
@@ -601,44 +602,14 @@ class CharucoBoard(CalibrationObject):
             out[i] = cxs
         return out
 
-    def detect_markers(self, image, camera=None, refine=True):
+    def detect_markers(self, image):
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
             gray = image
-
-        params = aruco.DetectorParameters_create()
-        params.cornerRefinementMethod = aruco.CORNER_REFINE_CONTOUR
-        params.adaptiveThreshWinSizeMin = 100
-        params.adaptiveThreshWinSizeMax = 700
-        params.adaptiveThreshWinSizeStep = 50
-        params.adaptiveThreshConstant = 0
-
-        try:
-            corners, ids, rejectedImgPoints = aruco.detectMarkers(
-                gray, self.dictionary, parameters=params) 
-        except Exception:
-            ids = None
-
-
-        if ids is None:
-            return [], []
-
-        if camera is None:
-            K = D = None
-        else:
-            K = camera.get_camera_matrix()
-            D = camera.get_distortions()
-
-        if refine:
-            detectedCorners, detectedIds, rejectedCorners, recoveredIdxs = \
-                aruco.refineDetectedMarkers(gray, self.board, corners, ids,
-                                            rejectedImgPoints,
-                                            K, D,
-                                            parameters=params)
-        else:
-            detectedCorners, detectedIds = corners, ids
-
+        detectedCorners, detectedIds, _, _ = self.detector.detectBoard(gray)
+        if detectedCorners is None:
+            detectedCorners = detectedIds = np.float64([])
         return detectedCorners, detectedIds
 
     def detect_image(self, image, camera=None):
@@ -648,14 +619,7 @@ class CharucoBoard(CalibrationObject):
         else:
             gray = image
 
-        corners, ids = self.detect_markers(image, camera, refine=True)
-        if len(corners) > 0:
-            ret, detectedCorners, detectedIds = aruco.interpolateCornersCharuco(
-                corners, ids, gray, self.board)
-            if detectedIds is None:
-                detectedCorners = detectedIds = np.float64([])
-        else:
-            detectedCorners = detectedIds = np.float64([])
+        detectedCorners, detectedIds = self.detect_markers(image)
 
         if len(detectedCorners) > 0 \
             and self.manually_verify \

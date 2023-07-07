@@ -57,7 +57,9 @@ def mean_transform_robust(M_list, approx=None, error=0.3):
             m = np.max(np.abs(rot_error))
             if m < error:
                 M_list_robust.append(M)
-    return mean_transform(M_list_robust)
+    if M_list_robust:
+        return mean_transform(M_list_robust)
+    return approx
 
 
 def get_transform(rtvecs, left, right):
