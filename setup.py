@@ -20,10 +20,14 @@ setuptools.setup(
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Image Recognition"
     ],
+    dependency_links=[
+        'https://storage.googleapis.com/jax-releases/jax_cuda_releases.html'
+    ],
     install_requires=[
         'opencv-contrib-python>=4.7.0.68',
         'numba', 'pandas',
-        'numpy', 'scipy', 'toml', 'tqdm'
+        'numpy', 'scipy', 'toml', 'tqdm',
+        'jax[cuda11_pip]'
     ],
     extras_require={
     }

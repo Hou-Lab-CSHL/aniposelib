@@ -12,24 +12,28 @@ import itertools
 from tqdm import trange
 from pprint import pprint
 import time
+import jax
+import jax.numpy as jnp
 
 from .boards import merge_rows, extract_points, \
     extract_rtvecs, get_video_params
 from .utils import get_initial_extrinsics, make_M, get_rtvec, \
     get_connections
 
-@jit(nopython=True, parallel=True)
+def build_triangulate_syseq(point, camera_mat):
+    eqs = jnp.expand_dims(point, axis=-1) * jnp.expand_dims(camera_mat[2], axis=0)
+    eqs = eqs - camera_mat[0:2]
+
+    return eqs
+
+@jax.jit
 def triangulate_simple(points, camera_mats):
-    num_cams = len(camera_mats)
-    A = np.zeros((num_cams * 2, 4))
-    for i in range(num_cams):
-        x, y = points[i]
-        mat = camera_mats[i]
-        A[(i * 2):(i * 2 + 1)] = x * mat[2] - mat[0]
-        A[(i * 2 + 1):(i * 2 + 2)] = y * mat[2] - mat[1]
-    u, s, vh = np.linalg.svd(A, full_matrices=True)
+    A = jax.vmap(build_triangulate_syseq)(points, camera_mats)
+    A = jnp.reshape(A, (-1, 4))
+    _, _, vh = jnp.linalg.svd(A, full_matrices=True)
     p3d = vh[-1]
     p3d = p3d[:3] / p3d[3]
+
     return p3d
 
 
@@ -407,7 +411,7 @@ class FisheyeCamera(Camera):
 
         if only_extrinsics:
             return
-        
+
         self.set_focal_length(params[6])
 
         dist = np.zeros(4, dtype='float64')
@@ -509,7 +513,7 @@ class CameraGroup:
 
         if fast:
             cam_Rt_mats = np.array([cam.get_extrinsics_mat()[:3] for cam in self.cameras])
-            
+
             p3d_allview_withnan = []
             for j1, j2 in itertools.combinations(range(n_cams), 2):
                 pts1, pts2 = points[j1], points[j2]
@@ -536,11 +540,17 @@ class CameraGroup:
                 good = ~np.isnan(subp[:, 0])
                 if np.sum(good) >= 2:
                     out[ip] = triangulate_simple(subp[good], cam_mats[good])
+            cam_mats = jnp.stack([cam.get_extrinsics_mat() for cam in self.cameras])
+            points = jnp.array(points)
+            is_good = jnp.sum(~jnp.isnan(points[:, :, 0]), axis=0) >= 2
+            vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None))
+            out = vtriangulate(points, cam_mats)
+            out = jnp.where(jnp.expand_dims(is_good, axis=-1), out, jnp.nan)
 
         if one_point:
             out = out[0]
 
-        return out
+        return np.array(out)
 
     def triangulate_possible(self, points, undistort=True,
                              min_cams=2, progress=False, threshold=0.5):
