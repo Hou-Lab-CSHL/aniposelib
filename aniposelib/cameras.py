@@ -27,8 +27,9 @@ def build_triangulate_syseq(point, camera_mat):
     return eqs
 
 @jax.jit
-def triangulate_simple(points, camera_mats):
+def triangulate_simple(points, camera_mats, valid):
     A = jax.vmap(build_triangulate_syseq)(points, camera_mats)
+    A = jnp.where(jnp.expand_dims(valid, axis=(1, 2)), A, 0)
     A = jnp.reshape(A, (-1, 4))
     _, _, vh = jnp.linalg.svd(A, full_matrices=True)
     p3d = vh[-1]
@@ -542,10 +543,11 @@ class CameraGroup:
                     out[ip] = triangulate_simple(subp[good], cam_mats[good])
             cam_mats = jnp.stack([cam.get_extrinsics_mat() for cam in self.cameras])
             points = jnp.array(points)
-            is_good = jnp.sum(~jnp.isnan(points[:, :, 0]), axis=0) >= 2
-            vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None))
-            out = vtriangulate(points, cam_mats)
-            out = jnp.where(jnp.expand_dims(is_good, axis=-1), out, jnp.nan)
+            good = ~jnp.isnan(points[:, :, 0])
+            is_good = jnp.expand_dims(jnp.sum(good, axis=0) >= 2, axis=-1)
+            vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None, 1))
+            out = vtriangulate(points, cam_mats, good)
+            out = jnp.where(is_good, out, jnp.nan)
 
         if one_point:
             out = out[0]
