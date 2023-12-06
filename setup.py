@@ -27,7 +27,7 @@ setuptools.setup(
         'opencv-contrib-python',
         'numba', 'pandas',
         'numpy', 'scipy', 'toml', 'tqdm',
-        'jax[cuda11_pip]'
+        'jax'
     ],
     extras_require={
         'full':  ["checkerboard"]
