@@ -545,8 +545,16 @@ class CameraGroup:
             points = jnp.array(points)
             good = ~jnp.isnan(points[:, :, 0])
             is_good = jnp.expand_dims(jnp.sum(good, axis=0) >= 2, axis=-1)
+            # batch and parallelize triangulation
+            points = jnp.reshape(points, (-1, points.shape[0], 100000, points.shape[-1]))
+            good = jnp.reshape(good, (-1, good.shape[0], 100000))
             vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None, 1))
-            out = vtriangulate(points, cam_mats, good)
+            def scan_vtriangulate(carry, args):
+                points, good = args
+                return carry, vtriangulate(points, cam_mats, good)
+            out = jax.lax.scan(scan_vtriangulate, None, (points, good))
+            # out = vtriangulate(points, cam_mats, good)
+            out = jnp.reshape(out, (-1, 3))
             out = jnp.where(is_good, out, jnp.nan)
 
         if one_point:
