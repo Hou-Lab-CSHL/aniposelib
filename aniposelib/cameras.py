@@ -541,22 +541,27 @@ class CameraGroup:
                 good = ~np.isnan(subp[:, 0])
                 if np.sum(good) >= 2:
                     out[ip] = triangulate_simple(subp[good], cam_mats[good])
-            cam_mats = jnp.stack([cam.get_extrinsics_mat() for cam in self.cameras])
-            points = jnp.array(points)
-            good = ~jnp.isnan(points[:, :, 0])
-            is_good = jnp.expand_dims(jnp.sum(good, axis=0) >= 2, axis=-1)
-            # batch and parallelize triangulation
-            batch_size = min(100000, points.shape[1])
-            points = jnp.reshape(points, (-1, points.shape[0], batch_size, points.shape[-1]))
-            good = jnp.reshape(good, (-1, good.shape[0], batch_size))
-            vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None, 1))
-            def scan_vtriangulate(carry, args):
-                points, good = args
-                return carry, vtriangulate(points, cam_mats, good)
-            out = jax.lax.scan(scan_vtriangulate, None, (points, good))
-            # out = vtriangulate(points, cam_mats, good)
-            out = jnp.reshape(out, (-1, 3))
-            out = jnp.where(is_good, out, jnp.nan)
+        cam_mats = jnp.stack([cam.get_extrinsics_mat() for cam in self.cameras])
+        points = jnp.array(points)
+        good = ~jnp.isnan(points[:, :, 0])
+        is_good = jnp.expand_dims(jnp.sum(good, axis=0) >= 2, axis=-1)
+        # batch and parallelize triangulation
+        N = points.shape[1]
+        batch_size = min(100000, points.shape[1])
+        pad_size = batch_size - (points.shape[1] % batch_size)
+        points = jnp.pad(points, ((0, 0), (0, pad_size), (0, 0)),
+                        constant_values=0)
+        good = jnp.pad(good, ((0, 0), (0, pad_size)), constant_values=False)
+        points = jnp.reshape(points, (-1, points.shape[0], batch_size, points.shape[-1]))
+        good = jnp.reshape(good, (-1, good.shape[0], batch_size))
+        vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None, 1))
+        def scan_vtriangulate(carry, args):
+            points, good = args
+            return carry, vtriangulate(points, cam_mats, good)
+        _, out = jax.lax.scan(scan_vtriangulate, None, (points, good))
+        # out = vtriangulate(points, cam_mats, good)
+        out = jnp.reshape(out, (-1, 3))[:N]
+        out = jnp.where(is_good, out, jnp.nan)
 
         if one_point:
             out = out[0]
