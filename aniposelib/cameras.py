@@ -552,11 +552,16 @@ class CameraGroup:
         points = jnp.pad(points, ((0, 0), (0, pad_size), (0, 0)),
                         constant_values=0)
         good = jnp.pad(good, ((0, 0), (0, pad_size)), constant_values=False)
-        points = jnp.reshape(points, (-1, points.shape[0], batch_size, points.shape[-1]))
-        good = jnp.reshape(good, (-1, good.shape[0], batch_size))
+        points = jnp.permute_dims(points, (1, 0, 2))
+        points = jnp.reshape(points, (-1, batch_size, points.shape[1], points.shape[2]))
+        good = jnp.permute_dims(good, (1, 0))
+        good = jnp.reshape(good, (-1, batch_size, good.shape[1]))
         vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None, 1))
         def scan_vtriangulate(carry, args):
             points, good = args
+            points = jnp.permute_dims(points, (1, 0, 2))
+            good = jnp.permute_dims(good, (1, 0))
+
             return carry, vtriangulate(points, cam_mats, good)
         _, out = jax.lax.scan(scan_vtriangulate, None, (points, good))
         # out = vtriangulate(points, cam_mats, good)
