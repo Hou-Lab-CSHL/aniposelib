@@ -523,11 +523,15 @@ class CameraGroup:
             out = np.nanmedian(p3d_allview_withnan, axis=0)
 
         else:
+            # Determine batch size and prepare for batching
+            batch_size = min(100000, n_points)
+            num_batches = (n_points + batch_size - 1) // batch_size
+
             # Get camera matrices once since these don't need batching
             cam_mats = jnp.stack([cam.get_extrinsics_mat() for cam in self.cameras])
 
             # Initialize output array
-            out = np.full((N, 3), np.nan)
+            out = np.full((n_points, 3), np.nan)
 
             # Get vectorized triangulate function
             vtriangulate = jax.vmap(triangulate_simple, in_axes=(1, None, 1))
@@ -535,18 +539,10 @@ class CameraGroup:
             # Process in batches
             for batch_idx in range(num_batches):
                 start_idx = batch_idx * batch_size
-                end_idx = min((batch_idx + 1) * batch_size, N)
+                end_idx = min((batch_idx + 1) * batch_size, n_points)
                 current_batch_size = end_idx - start_idx
                 # Extract current batch
                 batch_points = points[:, start_idx:end_idx].copy()
-                # Undistort points in the current batch if needed
-                if undistort:
-                    new_batch_points = np.empty(batch_points.shape)
-                    for cnum, cam in enumerate(self.cameras):
-                        # must copy in order to satisfy opencv underneath
-                        sub = np.copy(batch_points[cnum])
-                        new_batch_points[cnum] = cam.undistort_points(sub)
-                    batch_points = new_batch_points
                 # Convert to JAX arrays and prepare for triangulation
                 batch_points = jnp.array(batch_points)
                 batch_good = ~jnp.isnan(batch_points[:, :, 0])
