@@ -550,9 +550,9 @@ class CharucoBoard(CalibrationObject):
             self.USE_OPEN_CV_47_API = True
         else:
             msg = (f"Your installed version of OpenCV is {cv2.__version__}\n" +
-                f"OpenCV changed the aruco API in version 4.7\n" +
-                f"Aniposelib will fall back to the old version of the API\n" +
-                f"but this support will be removed in the future.\n\n")
+                   "OpenCV changed the aruco API in version 4.7\n" +
+                   "Aniposelib will fall back to the old version of the API\n" +
+                   "but this support will be removed in the future.\n\n")
             warnings.warn(msg, DeprecationWarning)
             self.USE_OPEN_CV_47_API = False
 
@@ -725,7 +725,35 @@ class CharucoBoard(CalibrationObject):
         K = camera.get_camera_matrix()
         D = camera.get_distortions()
 
-        ret, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
-            corners, ids, self.board, K, D, None, None)
+        if self.USE_OPEN_CV_47_API:
+            # OpenCV 4.7+ API: Use CharucoDetector and solvePnP
+            # First, get the object points for the detected corners
+            obj_points = self.board.getChessboardCorners()
 
-        return rvec, tvec
+            # Filter object points to match detected corner IDs
+            if len(ids) > 0:
+                detected_obj_points = []
+                detected_img_points = []
+
+                for i, corner_id in enumerate(ids.flatten()):
+                    if corner_id < len(obj_points):
+                        detected_obj_points.append(obj_points[corner_id])
+                        detected_img_points.append(corners[i])
+
+                if len(detected_obj_points) >= 4:  # Need at least 4 points for solvePnP
+                    obj_points_array = np.array(detected_obj_points, dtype=np.float32)
+                    img_points_array = np.array(detected_img_points, dtype=np.float32)
+
+                    ret, rvec, tvec = cv2.solvePnP(
+                        obj_points_array, img_points_array, K, D)
+
+                    if ret:
+                        return rvec, tvec
+
+            return None, None
+        else:
+            # OpenCV < 4.6 API: Use the deprecated estimatePoseCharucoBoard
+            ret, rvec, tvec = aruco.estimatePoseCharucoBoard(
+                corners, ids, self.board, K, D, None, None)
+
+            return rvec, tvec
