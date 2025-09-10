@@ -726,23 +726,32 @@ class CharucoBoard(CalibrationObject):
         D = camera.get_distortions()
 
         if self.USE_OPEN_CV_47_API:
-            # OpenCV 4.7+ API: Use CharucoDetector and solvePnP
-            # First, get the object points for the detected corners
-            obj_points = self.board.getChessboardCorners()
+            # OpenCV 4.7+ API: Use manual method with getChessboardCorners + solvePnP
+            # Note: matchImagePoints exists but can be unreliable with real data
 
-            # Filter object points to match detected corner IDs
-            if len(ids) > 0:
+            # Get all chessboard corner object points
+            all_obj_points = self.board.getChessboardCorners()
+
+            if len(ids) > 0 and all_obj_points is not None:
                 detected_obj_points = []
                 detected_img_points = []
 
+                # Match detected corner IDs to object points
                 for i, corner_id in enumerate(ids.flatten()):
-                    if corner_id < len(obj_points):
-                        detected_obj_points.append(obj_points[corner_id])
-                        detected_img_points.append(corners[i])
+                    if corner_id < len(all_obj_points):
+                        detected_obj_points.append(all_obj_points[corner_id])
+                        detected_img_points.append(corners[i].reshape(2))
 
-                if len(detected_obj_points) >= 4:  # Need at least 4 points for solvePnP
+                # Need at least 6 points for solvePnP
+                if len(detected_obj_points) >= 6:
                     obj_points_array = np.array(detected_obj_points, dtype=np.float32)
                     img_points_array = np.array(detected_img_points, dtype=np.float32)
+
+                    # Ensure correct shapes (solvePnP expects Nx3 and Nx2)
+                    if obj_points_array.ndim == 3:
+                        obj_points_array = obj_points_array.reshape(-1, 3)
+                    if img_points_array.ndim == 3:
+                        img_points_array = img_points_array.reshape(-1, 2)
 
                     ret, rvec, tvec = cv2.solvePnP(
                         obj_points_array, img_points_array, K, D)
@@ -752,7 +761,7 @@ class CharucoBoard(CalibrationObject):
 
             return None, None
         else:
-            # OpenCV < 4.6 API: Use the deprecated estimatePoseCharucoBoard
+            # OpenCV < 4.7 API: Use the deprecated estimatePoseCharucoBoard
             ret, rvec, tvec = aruco.estimatePoseCharucoBoard(
                 corners, ids, self.board, K, D, None, None)
 
