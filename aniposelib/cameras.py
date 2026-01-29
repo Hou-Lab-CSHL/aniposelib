@@ -501,10 +501,13 @@ class CameraGroup:
             points = points.reshape(-1, 1, 2)
             one_point = True
 
-        # Determine batch size and prepare for batching
-        N = points.shape[1]
-        batch_size = min(100000, N)
-        num_batches = (N + batch_size - 1) // batch_size
+        if undistort:
+            new_points = np.empty(points.shape)
+            for cnum, cam in enumerate(self.cameras):
+                # must copy in order to satisfy opencv underneath
+                sub = np.copy(points[cnum])
+                new_points[cnum] = cam.undistort_points(sub)
+            points = new_points
 
         n_cams, n_points, _ = points.shape
 
