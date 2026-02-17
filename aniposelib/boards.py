@@ -613,7 +613,7 @@ class CharucoBoard(CalibrationObject):
             out[i] = cxs
         return out
 
-    def detect_markers(self, image):
+    def detect_markers(self, image, camera=None, refine=True):
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
