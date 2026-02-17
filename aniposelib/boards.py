@@ -145,7 +145,7 @@ def extract_points(merged,
                     else:
                         row[cname]['rvec'] = np.full(3, np.nan, dtype='float64')
                         row[cname]['tvec'] = np.full(3, np.nan, dtype='float64')
-                
+
                 imgp[cix, rix] = filled
 
                 rvecs[cix, rix, ~bad] = row[cname]['rvec'].ravel()
@@ -562,12 +562,23 @@ class CharucoBoard(CalibrationObject):
         }
 
         dkey = (marker_bits, dict_size)
-        self.dictionary = aruco.getPredefinedDictionary(ARUCO_DICTS[dkey])
-        self.board = aruco.CharucoBoard(size=(squaresX, squaresY),
-                                        squareLength=square_length,
-                                        markerLength=marker_length,
-                                        dictionary=self.dictionary)
-        self.detector = aruco.CharucoDetector(self.board)
+        self.dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICTS[dkey])
+
+        self.board = cv2.aruco.CharucoBoard([squaresX, squaresY],
+                                            square_length, marker_length,
+                                            self.dictionary)
+        # set up detector parameters for ArUco marker detection
+        self.detector_params = cv2.aruco.DetectorParameters()
+        self.detector_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
+        self.detector_params.adaptiveThreshWinSizeMin = 50
+        self.detector_params.adaptiveThreshWinSizeMax = 700
+        self.detector_params.adaptiveThreshWinSizeStep = 50
+        self.detector_params.adaptiveThreshConstant = 0
+        # create detector instances using the OpenCV 4.7+ class-based API
+        self.detector = cv2.aruco.ArucoDetector(self.dictionary,
+                                                self.detector_params)
+        self.charuco_detector = cv2.aruco.CharucoDetector(self.board)
+        self.charuco_detector.setDetectorParameters(self.detector_params)
 
         total_size = (squaresX - 1) * (squaresY - 1)
 
@@ -591,7 +602,7 @@ class CharucoBoard(CalibrationObject):
         return np.copy(self.empty_detection)
 
     def draw(self, size):
-        return self.board.draw(size)
+        return self.board.generateImage(size)
 
     def fill_points(self, corners, ids):
         out = self.get_empty_detection()
@@ -607,9 +618,29 @@ class CharucoBoard(CalibrationObject):
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
             gray = image
-        detectedCorners, detectedIds, _, _ = self.detector.detectBoard(gray)
-        if detectedCorners is None:
-            detectedCorners = detectedIds = np.float64([])
+        try:
+            corners, ids, rejectedImgPoints = self.detector.detectMarkers(gray)
+        except Exception:
+            ids = None
+
+        if ids is None:
+            return [], []
+
+        if camera is None:
+            K = D = None
+        else:
+            K = camera.get_camera_matrix()
+            D = camera.get_distortions()
+
+        if refine:
+            detectedCorners, detectedIds, rejectedCorners, recoveredIdxs = \
+                self.detector.refineDetectedMarkers(gray, self.board,
+                    corners, ids,
+                    rejectedImgPoints,
+                    K, D)
+        else:
+            detectedCorners, detectedIds = corners, ids
+
         return detectedCorners, detectedIds
 
     def detect_image(self, image, camera=None):
@@ -619,7 +650,11 @@ class CharucoBoard(CalibrationObject):
         else:
             gray = image
 
-        detectedCorners, detectedIds = self.detect_markers(image)
+        # use CharucoDetector which combines marker detection + charuco
+        # corner interpolation in one step (OpenCV 4.7+ API)
+        detectedCorners, detectedIds, _, _ = self.charuco_detector.detectBoard(gray)
+        if detectedCorners is None:
+            detectedCorners = detectedIds = np.float64([])
 
         if len(detectedCorners) > 0 \
             and self.manually_verify \
@@ -660,8 +695,23 @@ class CharucoBoard(CalibrationObject):
 
         K = camera.get_camera_matrix()
         D = camera.get_distortions()
-
-        ret, rvec, tvec = aruco.estimatePoseCharucoBoard(
-            corners, ids, self.board, K, D, None, None)
-
-        return rvec, tvec
+        # use getChessboardCorners + solvePnP (OpenCV 4.7+ API)
+        all_obj_points = self.board.getChessboardCorners()
+        if len(ids) > 0 and all_obj_points is not None:
+            detected_obj_points = []
+            detected_img_points = []
+            # match detected corner IDs to object points
+            for i, corner_id in enumerate(ids.flatten()):
+                if corner_id < len(all_obj_points):
+                    detected_obj_points.append(all_obj_points[corner_id])
+                    detected_img_points.append(corners[i].reshape(2))
+            if len(detected_obj_points) >= 7:
+                obj_points_array = np.array(detected_obj_points,
+                                            dtype=np.float32).reshape(-1, 3)
+                img_points_array = np.array(detected_img_points,
+                                            dtype=np.float32).reshape(-1, 2)
+                ret, rvec, tvec = cv2.solvePnP(obj_points_array,
+                                               img_points_array, K, D)
+                if ret:
+                    return rvec, tvec
+        return None, None
